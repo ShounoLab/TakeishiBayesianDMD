@@ -1,0 +1,34 @@
+# ignore all
+*
+
+# allow directory
+!*/
+
+# allow
+!/Utils/NLSESimulations
+!/data/Data/*walking*
+!/data/Data/*bicycling*
+
+!*.txt
+!*.md
+#!*.jld2
+
+!*.jl
+!*.py
+
+!*.tex
+!*.cls
+!*.sty
+!*.bib
+!*.bst
+!*.bbl
+!*.log
+
+#!*.svg
+#!*.pdf
+#!*.png
+#!*.jpg
+#!*.jpeg
+#!*.ai
+
+!.gitignore
