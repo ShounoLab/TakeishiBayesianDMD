@@ -45,8 +45,7 @@ end
 
 function reconstruct(original_time :: Vector{Float64},
                      t_ary :: Vector{Float64}, dp :: DMDParams)
-    #Δt = t_ary[2] - t_ary[1]
-    Δt = original_time[2] - original_time[1]
+    #Δt = t_ary[2] - t_ary[1] Δt = original_time[2] - original_time[1]
     Λc = diagm(log.(dp.λ)) / Δt
 
     reconstructed_mat = Matrix{Complex{Float64}}(undef, (dp.n_datadims, length(t_ary)))
