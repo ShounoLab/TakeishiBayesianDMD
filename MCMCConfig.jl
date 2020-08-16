@@ -5,10 +5,12 @@ struct MCMCConfig
     n_iter :: Int64
     burnin :: Int64
     thinning :: Int64
+    sortsamples :: Bool
 end
 
 function MCMCConfig(n_iter :: Int64, burnin :: Int64;
-                    thinning :: Int64 = 1)
+                    thinning :: Int64 = 1,
+                    sortsamples :: Bool = false)
     if n_iter < burnin
         error("ERROR: the burnin number is must be less than iter number")
     end
@@ -17,7 +19,7 @@ function MCMCConfig(n_iter :: Int64, burnin :: Int64;
         error("ERROR: too long thinning")
     end
 
-    return MCMCConfig(n_iter, burnin, thinning)
+    return MCMCConfig(n_iter, burnin, thinning, sortsamples)
 end
 
 function write_config(filename :: String, mc_conf :: MCMCConfig)

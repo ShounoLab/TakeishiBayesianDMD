@@ -108,7 +108,7 @@ end
 function drop_samples(dp :: BDMDParams, mp :: ModelParams, mc :: MCMCConfig)
     sample_indices = filter(j -> (j % mc.thinning == 0) && (j > mc.burnin), 1:mc.n_iter)
     n_samples = length(sample_indices)
-    _mc = MCMCConfig(n_samples, 0, 1)
+    _mc = MCMCConfig(n_samples, 0)
     dropped_dp = init_dmd_params(mp, _mc)
 
     for (i, j) in enumerate(sample_indices)
@@ -119,6 +119,16 @@ function drop_samples(dp :: BDMDParams, mp :: ModelParams, mc :: MCMCConfig)
         dropped_dp.σ².samples[i] = dp.σ².samples[j]
     end
     return dropped_dp
+end
+
+function sort_samples(iter :: Int64, dp :: BDMDParams)
+    perm = sortperm(dp.λ.samples[:, iter], by = abs, rev = true)
+    dp.λ.samples[:, iter] .= dp.λ.samples[perm, iter]
+    dp.ϕ.samples[:, :, iter] .= dp.ϕ.samples[perm, :, iter]
+    dp.v.samples[:, :, iter] .= dp.v.samples[:, perm, iter]
+    dp.w.samples[:, :, iter] .= dp.w.samples[:, perm, iter]
+
+    return nothing
 end
 
 function bayesianDMD(Y :: Matrix{<:Union{Float64, ComplexF64}},
@@ -138,6 +148,10 @@ function bayesianDMD(Y :: Matrix{<:Union{Float64, ComplexF64}},
         gibbs_for_λ(Y₁, iter, dmd_params, model_params)
         gibbs_for_ϕ(Y₀, Y₁, iter, dmd_params, model_params)
         gibbs_for_σ²(Y₀, Y₁, iter, dmd_params, model_params)
+
+        if mc_config.sortsamples
+            sort_samples(iter, dmd_params)
+        end
 
         log_liks[iter] = calc_log_lik(Y₀, Y₁, iter, dmd_params, model_params)
 

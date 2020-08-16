@@ -126,7 +126,7 @@ D, T = size(result.ψ)
 t_ary = collect(0:config.Δt:config.t_end)
 
 K = 7
-mc_config = MCMCConfig(3000, 1000, thinning = 1)
+mc_config = MCMCConfig(3000, 1000, thinning = 1, sortsamples = true)
 model_params = ModelParams(length(t_ary), config.Ngrids, K,
                            1e-3, 1e-3, 1e-3, 1e-3)
 
