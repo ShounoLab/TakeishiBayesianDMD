@@ -1,6 +1,6 @@
 using ProgressMeter
 using SparseArrays
-include("./TBDMDParams.jl")
+include("$(@__DIR__)/TBDMDParams.jl")
 
 function gibbs_for_w!(Y₀ :: Matrix{Union{R, C}},
                       Y₁ :: Matrix{Union{R, C}},

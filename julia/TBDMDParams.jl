@@ -1,7 +1,7 @@
 using Distributions
 
-include("./ModelParams.jl")
-include("./MCMCConfig.jl")
+include("$(@__DIR__)/ModelParams.jl")
+include("$(@__DIR__)/MCMCConfig.jl")
 
 try
     include("./ComplexNormal.jl")
