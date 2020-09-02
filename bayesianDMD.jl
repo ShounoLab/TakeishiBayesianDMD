@@ -1,132 +1,149 @@
 using ProgressMeter
-include("./BDMDParams.jl")
+using SparseArrays
+include("./TBDMDParams.jl")
 
-function gibbs_for_w(Y₀ :: Matrix{Union{R, C}}, Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                     dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
+function gibbs_for_w!(Y₀ :: Matrix{Union{R, C}},
+                      Y₁ :: Matrix{Union{R, C}},
+                      dp :: TBDMDParams,
+                      dp_prev :: TBDMDParams,
+                      mp :: ModelParams) where {R <: Real, C <: Complex}
     for k in 1:mp.n_modes
         indices_wo_k = deleteat!(collect(1:mp.n_modes), k)
         ϕₖ_L2² = 0.0
-        ξ₋ₖ = Matrix{Complex}(undef, (mp.n_datadims, mp.n_data - 1))
-        η₋ₖ = Matrix{Complex}(undef, (mp.n_datadims, mp.n_data - 1))
-        sum_in_m = Complex{Float64}.(zeros(mp.n_datadims))
+        ξ₋ₖ = Matrix{Complex{Float64}}(undef, (mp.n_datadims, mp.n_data - 1))
+        η₋ₖ = Matrix{Complex{Float64}}(undef, (mp.n_datadims, mp.n_data - 1))
+        sum_in_m = zeros(Complex{Float64}, mp.n_datadims)
         for j in 1:(mp.n_data - 1)
-            ϕₖ_L2² += abs(dp.ϕ.samples[k, j, iter - 1]) .^ 2
-            ξ₋ₖ[:, j] = Y₀[:, j] - (dp.w.samples[:, indices_wo_k, iter - 1] *
-                               dp.ϕ.samples[indices_wo_k, j, iter - 1])
-            η₋ₖ[:, j] = Y₁[:, j] - (dp.w.samples[:, indices_wo_k, iter - 1] *
-                                    (dp.λ.samples[indices_wo_k, iter - 1] .*
-                                     dp.ϕ.samples[indices_wo_k, j, iter - 1]))
-            sum_in_m += conj(dp.ϕ.samples[k, j, iter - 1]) *
-            (ξ₋ₖ[:, j] + conj(dp.λ.samples[k, iter - 1]) * η₋ₖ[:, j])
+            ϕₖ_L2² += abs2(dp_prev.ϕ[k, j])
+            ξ₋ₖ[:, j] = Y₀[:, j] - (dp_prev.w[:, indices_wo_k] *
+                                    dp_prev.ϕ[indices_wo_k, j])
+            η₋ₖ[:, j] = Y₁[:, j] - (dp_prev.w[:, indices_wo_k] *
+                                    (dp_prev.λ[indices_wo_k] .*
+                                     dp_prev.ϕ[indices_wo_k, j]))
+            sum_in_m += conj(dp_prev.ϕ[k, j]) *
+                        (ξ₋ₖ[:, j] .+ (conj(dp_prev.λ[k]) .* η₋ₖ[:, j]))
         end
-        Pwₖ = Diagonal(dp.v.samples[:, k, iter - 1] .^ (-1)) +
-              I * (1 + abs(dp.λ.samples[k, iter - 1]) ^ 2) * ϕₖ_L2² / dp.σ².samples[iter - 1]
+        Pwₖ = Diagonal(dp_prev.v[:, k] .^ (-1)) +
+              I * (1 + abs2(dp_prev.λ[k])) * ϕₖ_L2² / dp_prev.σ²
         P⁻¹ = Pwₖ ^ (-1)
-        mwₖ = P⁻¹ * sum_in_m ./ dp.σ².samples[iter - 1]
-        dp.w.samples[:, k, iter] =
-            rand(MvComplexNormal(mwₖ, Matrix(P⁻¹),
-                                 check_posdef = false, check_hermitian = false))
+        mwₖ = P⁻¹ * sum_in_m ./ dp_prev.σ²
+        for d in 1:mp.n_datadims
+            dp.w[d, k] = rand(ComplexNormal(mwₖ[d], √P⁻¹[d, d]))
+        end
     end
 end
 
-function gibbs_for_v(iter :: Int64, dp :: BDMDParams, mp :: ModelParams)
+function gibbs_for_v!(dp :: TBDMDParams,
+                      mp :: ModelParams)
     for k in 1:mp.n_modes
         for d in 1:mp.n_datadims
             aᵥ = mp.αᵥ + 1
-            bᵥ = mp.βᵥ + abs(dp.w.samples[d, k, iter]) ^ 2
-            dp.v.samples[d, k, iter] = rand(InverseGamma(aᵥ, bᵥ))
+            bᵥ = mp.βᵥ + abs2(dp.w[d, k])
+            dp.v[d, k] = rand(InverseGamma(aᵥ, bᵥ))
         end
     end
 end
 
-function gibbs_for_λ(Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                     dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
+function gibbs_for_λ!(Y₁ :: Matrix{Union{R, C}},
+                      dp :: TBDMDParams,
+                      dp_prev :: TBDMDParams,
+                      mp :: ModelParams) where {R <: Real, C <: Complex}
     for k in 1:mp.n_modes
-        ϕₖ_L2² = sum(abs.(dp.ϕ.samples[k, :, iter - 1]) .^ 2)
+        ϕₖ_L2² = sum(abs2.(dp_prev.ϕ[k, :]))
 
         indices_wo_k = deleteat!(collect(1:mp.n_modes), k)
         η₋ₖ = Matrix{Complex}(undef, (mp.n_datadims, mp.n_data - 1))
         sum_in_m = Complex{Float64}.(zeros(mp.n_datadims))
         for j in 1:(mp.n_data - 1)
-            η₋ₖⱼ = Y₁[:, j] - (dp.w.samples[:, indices_wo_k, iter] *
-                               (dp.λ.samples[indices_wo_k, iter - 1] .*
-                                dp.ϕ.samples[indices_wo_k, j, iter - 1]))
-            sum_in_m += conj(dp.ϕ.samples[k, j, iter - 1]) * η₋ₖⱼ
+            η₋ₖⱼ = Y₁[:, j] - (dp.w[:, indices_wo_k] *
+                               (dp_prev.λ[indices_wo_k] .*
+                                dp_prev.ϕ[indices_wo_k, j]))
+            sum_in_m += conj(dp_prev.ϕ[k, j]) * η₋ₖⱼ
         end
-        Pλ = 1 + dp.w.samples[:, k, iter]' * dp.w.samples[:, k, iter] *
-             ϕₖ_L2² / dp.σ².samples[iter - 1]
-        mλ = dp.w.samples[:, k, iter]' / (dp.σ².samples[iter - 1] * Pλ) * sum_in_m
-        dp.λ.samples[k, iter] = rand(ComplexNormal(mλ, √real(Pλ ^ (-1))))
+        Pλ = 1 + dp.w[:, k]' * dp.w[:, k] * ϕₖ_L2² / dp_prev.σ²
+        mλ = dp.w[:, k]' * sum_in_m / (dp_prev.σ² * Pλ)
+        dp.λ[k] = rand(ComplexNormal(mλ, √real(Pλ ^ (-1))))
     end
 end
 
-function gibbs_for_ϕ(Y₀ :: Matrix{Union{R, C}}, Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                     dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
-    W = dp.w.samples[:, :, iter]
-    Λ = Diagonal(dp.λ.samples[:, iter])
-    Pϕ = I + (W' * W + conj(Λ) * W' * W * Λ) ./ dp.σ².samples[iter - 1]
+function gibbs_for_ϕ!(Y₀ :: Matrix{Union{R, C}},
+                      Y₁ :: Matrix{Union{R, C}},
+                      dp :: TBDMDParams,
+                      dp_prev :: TBDMDParams,
+                      mp :: ModelParams) where {R <: Real, C <: Complex}
+    W = dp.w
+    Λ = Diagonal(dp.λ)
+    Pϕ = I + (W' * W + conj(Λ) * W' * W * Λ) ./ dp_prev.σ²
 
     P⁻¹ = Pϕ ^ (-1)
     for j in 1:(mp.n_data - 1)
-        mϕ = P⁻¹ ./ dp.σ².samples[iter - 1] * (W' * Y₀[:, j] + conj(Λ) * W' * Y₁[:, j])
-        dp.ϕ.samples[:, j, iter] =
-            rand(MvComplexNormal(mϕ, P⁻¹,
-                                 check_posdef = false, check_hermitian = false))
+        mϕ = P⁻¹ ./ dp_prev.σ² * (W' * Y₀[:, j] + conj(Λ) * W' * Y₁[:, j])
+        dp.ϕ[:, j] = rand(MvComplexNormal(mϕ, P⁻¹,
+                                          check_posdef = false,
+                                          check_hermitian = false))
     end
 end
 
-function gibbs_for_σ²(Y₀ :: Matrix{Union{R, C}}, Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                      dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
-    W = dp.w.samples[:, :, iter]
-    Λ = Diagonal(dp.λ.samples[:, iter])
+function gibbs_for_σ²!(Y₀ :: Matrix{Union{R, C}},
+                       Y₁ :: Matrix{Union{R, C}},
+                       dp :: TBDMDParams,
+                       mp :: ModelParams) where {R <: Real, C <: Complex}
+    W = dp.w
+    Λ = Diagonal(dp.λ)
 
     sum_in_b₁ = 0.0
     sum_in_b₂ = 0.0
     for j in 1:(mp.n_data - 1)
-        sum_in_b₁ += (Y₀[:, j] - W * dp.ϕ.samples[:, j, iter])' *
-                     (Y₀[:, j] - W * dp.ϕ.samples[:, j, iter])
-        sum_in_b₂ += (Y₁[:, j] - W * Λ * dp.ϕ.samples[:, j, iter])' *
-                     (Y₁[:, j] - W * Λ * dp.ϕ.samples[:, j, iter])
+        sum_in_b₁ += (Y₀[:, j] - W * dp.ϕ[:, j])' *
+                     (Y₀[:, j] - W * dp.ϕ[:, j])
+        sum_in_b₂ += (Y₁[:, j] - W * Λ * dp.ϕ[:, j])' *
+                     (Y₁[:, j] - W * Λ * dp.ϕ[:, j])
     end
     a = mp.αₛ + 2 * (mp.n_data - 1) * mp.n_modes
     b = real(mp.βₛ + sum_in_b₁ + sum_in_b₂)
-    dp.σ².samples[iter] = rand(InverseGamma(a, b))
+    dp.σ² = rand(InverseGamma(a, b))
 end
 
-function calc_log_lik(Y₀ :: Matrix{Union{R, C}}, Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                      dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
+function calc_log_lik(Y₀ :: Matrix{Union{R, C}},
+                      Y₁ :: Matrix{Union{R, C}},
+                      dp :: TBDMDParams,
+                      mp :: ModelParams) where {R <: Real, C <: Complex}
     log_lik = 0.0
     for j in 1:(mp.n_data - 1)
-        μ₀ = dp.w.samples[:, :, iter] * dp.ϕ.samples[:, j, iter]
-        μ₁ = dp.w.samples[:, :, iter] * (Diagonal(dp.λ.samples[:, iter]) * dp.ϕ.samples[:, j, iter])
-        log_lik += loglikelihood(MvComplexNormal(μ₀, √(dp.σ².samples[iter])), Y₀[:, j]) +
-                   loglikelihood(MvComplexNormal(μ₁, √(dp.σ².samples[iter])), Y₁[:, j])
+        μ₀ = dp.w * dp.ϕ[:, j]
+        μ₁ = dp.w * (Diagonal(dp.λ) * dp.ϕ[:, j])
+        for d in 1:(mp.n_datadims)
+            log_lik += loglikelihood(ComplexNormal(μ₀[d], √(dp.σ²)), Y₀[d, j]) +
+                       loglikelihood(ComplexNormal(μ₁[d], √(dp.σ²)), Y₁[d, j])
+        end
     end
     return log_lik
 end
 
-function drop_samples(dp :: BDMDParams, mp :: ModelParams, mc :: MCMCConfig)
+function drop_samples!(dp_ary :: Vector{TBDMDParams},
+                       mp :: ModelParams,
+                       mc :: MCMCConfig)
     sample_indices = filter(j -> (j % mc.thinning == 0) && (j > mc.burnin), 1:mc.n_iter)
     n_samples = length(sample_indices)
     _mc = MCMCConfig(n_samples, 0)
-    dropped_dp = init_dmd_params(mp, _mc)
+    dropped_dp_ary = init_dmd_params(mp, _mc)
 
     for (i, j) in enumerate(sample_indices)
-        dropped_dp.λ.samples[:, i] = copy(dp.λ.samples[:, j])
-        dropped_dp.ϕ.samples[:, :, i] = copy(dp.ϕ.samples[:, :, j])
-        dropped_dp.v.samples[:, :, i] = copy(dp.v.samples[:, :, j])
-        dropped_dp.w.samples[:, :, i] = copy(dp.w.samples[:, :, j])
-        dropped_dp.σ².samples[i] = dp.σ².samples[j]
+        dropped_dp_ary[i].λ = copy(dp_ary[j].λ)
+        dropped_dp_ary[i].ϕ = copy(dp_ary[j].ϕ)
+        dropped_dp_ary[i].v = copy(dp_ary[j].v)
+        dropped_dp_ary[i].w = copy(dp_ary[j].w)
+        dropped_dp_ary[i].σ² = dp_ary[j].σ²
     end
-    return dropped_dp
+    return dropped_dp_ary
 end
 
-function sort_samples(iter :: Int64, dp :: BDMDParams)
-    perm = sortperm(dp.λ.samples[:, iter], by = abs, rev = true)
-    dp.λ.samples[:, iter] .= dp.λ.samples[perm, iter]
-    dp.ϕ.samples[:, :, iter] .= dp.ϕ.samples[perm, :, iter]
-    dp.v.samples[:, :, iter] .= dp.v.samples[:, perm, iter]
-    dp.w.samples[:, :, iter] .= dp.w.samples[:, perm, iter]
+function sort_samples!(dp :: TBDMDParams)
+    perm = sortperm(dp.λ, by = abs, rev = true)
+    dp.λ .= dp.λ[perm]
+    dp.ϕ .= dp.ϕ[perm, :]
+    dp.v .= dp.v[:, perm]
+    dp.w .= dp.w[:, perm]
 
     return nothing
 end
@@ -139,59 +156,47 @@ function bayesianDMD(Y :: Matrix{<:Union{Float64, ComplexF64}},
     Y₁ = Y[:, 2:end]
 
     log_liks = Vector(undef, mc_config.n_iter)
-    log_liks[1] = calc_log_lik(Y₀, Y₁, 1, dmd_params, model_params)
+    log_liks[1] = calc_log_lik(Y₀, Y₁, dmd_params[1], model_params)
 
     progress = Progress(mc_config.n_iter)
     for iter in 2:mc_config.n_iter
-        gibbs_for_w(Y₀, Y₁, iter, dmd_params, model_params)
-        gibbs_for_v(iter, dmd_params, model_params)
-        gibbs_for_λ(Y₁, iter, dmd_params, model_params)
-        gibbs_for_ϕ(Y₀, Y₁, iter, dmd_params, model_params)
-        gibbs_for_σ²(Y₀, Y₁, iter, dmd_params, model_params)
+        gibbs_for_w!(Y₀, Y₁, dmd_params[iter], dmd_params[iter - 1], model_params)
+        gibbs_for_v!(dmd_params[iter], model_params)
+        gibbs_for_λ!(Y₁, dmd_params[iter], dmd_params[iter - 1], model_params)
+        gibbs_for_ϕ!(Y₀, Y₁, dmd_params[iter], dmd_params[iter - 1], model_params)
+        gibbs_for_σ²!(Y₀, Y₁, dmd_params[iter], model_params)
 
         if mc_config.sortsamples
-            sort_samples(iter, dmd_params)
+            sort_samples!(dmd_params[iter])
         end
 
-        log_liks[iter] = calc_log_lik(Y₀, Y₁, iter, dmd_params, model_params)
+        log_liks[iter] = calc_log_lik(Y₀, Y₁, dmd_params[iter], model_params)
 
         next!(progress)
     end
 
     # remove burnin and thinning intervals from samples
-    dmd_params_dropped = drop_samples(dmd_params, model_params, mc_config)
+    dmd_params_dropped = drop_samples!(dmd_params, model_params, mc_config)
 
     return dmd_params_dropped, log_liks
 end
 
-function calc_log_lik(Y₀ :: Matrix{Union{R, C}}, Y₁ :: Matrix{Union{R, C}}, iter :: Int64,
-                      dp :: BDMDParams, mp :: ModelParams) where {R <: Real, C <: Complex}
-    log_lik = 0.0
-    for j in 1:(mp.n_data - 1)
-        μ₀ = dp.w.samples[:, :, iter] * dp.ϕ.samples[:, j, iter]
-        μ₁ = dp.w.samples[:, :, iter] * (Diagonal(dp.λ.samples[:, iter]) * dp.ϕ.samples[:, j, iter])
-        log_lik += loglikelihood(MvComplexNormal(μ₀, √(dp.σ².samples[iter])), Y₀[:, j]) +
-                   loglikelihood(MvComplexNormal(μ₁, √(dp.σ².samples[iter])), Y₁[:, j])
-    end
-    return log_lik
+function mean_bdmd(dp_ary :: Vector{TBDMDParams}, mp ::ModelParams)
+    L = length(dp_ary)
+    λ = mean([dp_ary[i].λ for i in 1:L])
+    W = mean([dp_ary[i].w for i in 1:L])
+    V = mean([dp_ary[i].v for i in 1:L])
+    Φ = mean([dp_ary[i].ϕ for i in 1:L])
+    σ² = mean([dp_ary[i].σ² for i in 1:L])
+    return TBDMDParams(λ, Φ, V, W, σ²)
 end
 
-function mean_bdmd(dp :: BDMDParams, mp ::ModelParams)
-    λ = reshape(mean(dp.λ.samples, dims = 2), :)
-    W = reshape(mean(dp.w.samples, dims = 3), (mp.n_datadims, mp.n_modes))
-    Φ = reshape(mean(dp.ϕ.samples, dims = 3), (mp.n_modes, mp.n_data - 1))
-    σ² = mean(dp.σ².samples)
-    return Dict("λ" => λ, "W" => W, "Φ" => Φ, "σ²" => σ²)
-end
-
-function reconstruct_pointest(dp_mean :: Dict, mp :: ModelParams)
+function reconstruct_pointest(dp_mean :: TBDMDParams, mp :: ModelParams)
 
     Y_pointest = Matrix{ComplexF64}(undef, (mp.n_datadims, mp.n_data))
     for j in 1:(mp.n_data - 1)
-        Y_pointest[:, j] .= dp_mean["W"] * dp_mean["Φ"][:, j]
+        Y_pointest[:, j] .= dp_mean.w * dp_mean.ϕ[:, j]
     end
-    Y_pointest[:, mp.n_data] .= dp_mean["W"] * diagm(dp_mean["λ"]) * dp_mean["Φ"][:, mp.n_data - 1]
+    Y_pointest[:, mp.n_data] .= dp_mean.w * diagm(dp_mean.λ) * dp_mean.ϕ[:, mp.n_data - 1]
     return Y_pointest
 end
-
-
