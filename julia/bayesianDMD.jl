@@ -126,7 +126,7 @@ function drop_samples!(dp_ary :: Vector{TBDMDParams},
     sample_indices = filter(j -> (j % mc.thinning == 0) && (j > mc.burnin), 1:mc.n_iter)
     n_samples = length(sample_indices)
     _mc = TMCMCConfig(n_samples, 0)
-    dropped_dp_ary = init_dmd_params(mp, _mc)
+    dropped_dp_ary = init_tbdmd_params(mp, _mc)
 
     for (i, j) in enumerate(sample_indices)
         dropped_dp_ary[i].λ = copy(dp_ary[j].λ)
@@ -150,7 +150,7 @@ end
 
 function bayesianDMD(Y :: Matrix{<:Union{Float64, ComplexF64}},
                      model_params :: ModelParams, mc_config :: TMCMCConfig)
-    dmd_params = init_dmd_params(model_params, mc_config, init_with_prior = false)
+    dmd_params = init_tbdmd_params(model_params, mc_config, init_with_prior = false)
 
     Y₀ = Y[:, 1:(end - 1)]
     Y₁ = Y[:, 2:end]
