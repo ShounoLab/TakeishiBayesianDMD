@@ -1,7 +1,7 @@
 using Distributions
 
 include("$(@__DIR__)/ModelParams.jl")
-include("$(@__DIR__)/MCMCConfig.jl")
+include("$(@__DIR__)/TMCMCConfig.jl")
 
 try
     include("./ComplexNormal.jl")
@@ -28,7 +28,7 @@ mutable struct TBDMDParams
 end
 
 function init_tbdmd_params(model_params :: ModelParams,
-                           mc_config :: MCMCConfig;
+                           mc_config :: TMCMCConfig;
                            init_with_prior :: Bool = false)
     n_modes = model_params.n_modes
     n_datadims = model_params.n_datadims
